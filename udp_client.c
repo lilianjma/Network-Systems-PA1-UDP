@@ -74,6 +74,8 @@ int main(int argc, char **argv)
 		  (char *)&serveraddr.sin_addr.s_addr, server->h_length);
 	serveraddr.sin_port = htons(portno);
 
+	while (1)
+	{
 	/* get a message from the user */
 	bzero(buf, BUFSIZE);
 	printf("Use the following commands:\n"
@@ -172,6 +174,7 @@ int main(int argc, char **argv)
 	n = recvfrom(sockfd, buf, strlen(buf), 0, &serveraddr, &serverlen);
 	if (n < 0)
 		error("ERROR in recvfrom");
-	printf("Echo from server: %s!!!", buf);
+	printf("Echo from server: %s!!!\n", buf);
+	}
 	return 0;
 }
