@@ -12,6 +12,7 @@
 #include <netdb.h>
 
 #define BUFSIZE 1024
+#define FILENAME_BUFSIZE 1024
 #define EXIT 0
 #define LS 1
 #define DELETE 2
@@ -24,6 +25,7 @@
 typedef struct
 {
 	uint8_t command_id;
+	char filename[FILENAME_BUFSIZE];
 	uint32_t num_bytes;
 } Header;
 
@@ -78,12 +80,12 @@ int main(int argc, char **argv)
 	{
 	/* get a message from the user */
 	bzero(buf, BUFSIZE);
-	printf("Use the following commands:\n"
+	printf("--- Use the following commands: ---\n"
 		   "    get [file_name]\n"
 		   "    put [file_name]\n"
 		   "    delete [file_name]\n"
 		   "    ls\n"
-		   "    exit\n\n");
+		   "    exit\n\n$$$ ");
 	fgets(buf, BUFSIZE, stdin);
 
 	/* trim leading spaces and new line */
@@ -104,7 +106,7 @@ int main(int argc, char **argv)
 
 	*(endptr + 1) = '\0';
 
-	/* count the number of words in the command line*/
+	/* count the number of words in the command line */
 	char *ptrcpy = bufptr;
 	int count = 0;
 	int inWord = 0;
@@ -132,49 +134,92 @@ int main(int argc, char **argv)
 	// Check for correct input
 	char *token = strtok(bufptr, " ");
 
+	/* EXIT COMMAND HANDLER */
 	if (strcmp(token, "exit") == 0)
 	{
 		h.command_id = 0;
 		printf("Command recognized: %s\n", token);
+		return 0;
 	}
+
+	/* LS COMMAND HANDLER */
 	else if (strcmp(token, "ls") == 0)
 	{
 		h.command_id = 1;
 		printf("Command recognized: %s\n", token);
 	}
+
+	/* DELETE COMMAND HANDLER */
 	else if (strcmp(token, "delete") == 0)
 	{
+		// Error
+		if (count != 2) {
+			printf ("Incorrect use of delete.\n");
+			continue;
+		}
+
+		// Correct command use
 		h.command_id = 2;
 		printf("Command recognized: %s\n", token);
+		token = strtok(NULL, " ");
+		strcpy(h.filename, token);
+		printf("Command filename: %s\n", h.filename);
 	}
+
+	/* PUT COMMAND HANDLER */
 	else if (strcmp(token, "put") == 0)
 	{
+		// Error
+		if (count != 2) {
+			printf ("Incorrect use of put.\n");
+			continue;
+		}
+
+		// Correct command use
 		h.command_id = 3;
 		printf("Command recognized: %s\n", token);
+		token = strtok(NULL, " ");
+		strcpy(h.filename, token);
+		printf("Command filename: %s\n", h.filename);
 	}
+
+	/* GET COMMAND HANDLER */
 	else if (strcmp(token, "get") == 0)
 	{
+		// Error
+		if (count != 2) {
+			printf ("Incorrect use of get.\n");
+			continue;
+		}
+
+		// Correct command use
 		h.command_id = 4;
 		printf("Command recognized: %s\n", token);
+		token = strtok(NULL, " ");
+		strcpy(h.filename, token);
+		printf("Command filename: %s\n", h.filename);
 	}
+
+	/* OTHER INPUT HANDLER */
 	else
 	{
 		h.command_id = 0xFF;
 		printf("Unknown command: %s\n", token ? token : "(empty)");
 	}
-	token = strtok(NULL, bufptr);
 
-	/* send the message to the server */
-	serverlen = sizeof(serveraddr);
-	n = sendto(sockfd, buf, strlen(buf), 0, &serveraddr, serverlen);
-	if (n < 0)
-		error("ERROR in sendto");
+	printf("\n\n");
 
-	/* print the server's reply */
-	n = recvfrom(sockfd, buf, strlen(buf), 0, &serveraddr, &serverlen);
-	if (n < 0)
-		error("ERROR in recvfrom");
-	printf("Echo from server: %s!!!\n", buf);
+	// /* send the message to the server */
+	// serverlen = sizeof(serveraddr);
+	// n = sendto(sockfd, buf, strlen(buf), 0, &serveraddr, serverlen);
+	// if (n < 0)
+	// 	error("ERROR in sendto");
+
+	// /* print the server's reply */
+	// n = recvfrom(sockfd, buf, strlen(buf), 0, &serveraddr, &serverlen);
+	// if (n < 0)
+	// 	error("ERROR in recvfrom");
+	// printf("Echo from server: %s!!!\n", buf);
 	}
 	return 0;
 }
