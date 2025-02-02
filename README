@@ -1,0 +1,13 @@
+--- COMPILE CLIENT AND SERVER ---
+gcc udp_client.c -o client
+gcc udp_server.c -o server
+
+--- RUN CLIENT AND SERVER ---
+./server [port_number]
+./client [ip_address] [port_number]
+
+--- NOTES ---
+Run server first?
+Port number > 5000
+When running both the client and the server on the same machine (aka testing locally)
+    use “localhost” or "127.0.0.1" in place of the IP address.
