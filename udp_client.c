@@ -18,6 +18,8 @@
 #define DELETE 2
 #define PUT 3
 #define GET 4
+#define false 0
+#define true 1
 
 /**
  * package header
@@ -26,9 +28,71 @@ typedef struct
 {
 	uint8_t command_id;
 	char filename[FILENAME_BUFSIZE];
-	uint32_t num_bytes;
+	long int num_bytes;
 } Header;
 
+Header h;
+
+int is_validfile(char* filename) {
+	// opening the file in read mode 
+    FILE* f = fopen(filename, "r"); 
+  
+    // checking if the file exist or not 
+    if (f == NULL) { 
+        printf("File Not Found!\n"); 
+        return false; 
+    }
+	return true;
+}
+
+long int get_filesize(char* filename) 
+{ 
+    // opening the file in read mode 
+    FILE* f = fopen(filename, "r"); 
+  
+    // checking if the file exist or not 
+    if (f == NULL) { 
+        printf("File Not Found!\n"); 
+        return -1; 
+    }
+  
+    fseek(f, 0L, SEEK_END);
+    long int res = ftell(f);
+    fclose(f);
+
+    return res; 
+}
+
+void command_handler() {
+	switch (h.command_id)
+	{
+	case EXIT:
+		// exit_command_handler();
+		break;
+	case LS:
+		// ls_command_handler();
+		break;
+	case DELETE:
+		if (!is_validfile(h.filename))
+			return;
+		printf("Filesize: %ld\n", get_filesize(h.filename));
+		// delete_command_handler();
+		break;
+	case PUT:
+		if (!is_validfile(h.filename))
+			return;
+		// put_command_handler();
+		break;
+	case GET:
+		if (!is_validfile(h.filename))
+			return;
+		// get_command_handler();
+		break;
+	
+	default:
+		break;
+	}
+}
 /*
  * error - wrapper for perror
  */
@@ -126,10 +190,7 @@ int main(int argc, char **argv)
 		ptrcpy++;
 	}
 
-	fprintf(stdout, "Number of commands %d\n", count);
-
-	// Create header
-	Header h;
+	// fprintf(stdout, "Number of commands %d\n", count); // TODODELETE
 
 	// Check for correct input
 	char *token = strtok(bufptr, " ");
@@ -137,16 +198,18 @@ int main(int argc, char **argv)
 	/* EXIT COMMAND HANDLER */
 	if (strcmp(token, "exit") == 0)
 	{
-		h.command_id = 0;
+		h.command_id = EXIT;
 		printf("Command recognized: %s\n", token);
+		command_handler();
 		return 0;
 	}
 
 	/* LS COMMAND HANDLER */
 	else if (strcmp(token, "ls") == 0)
 	{
-		h.command_id = 1;
+		h.command_id = LS;
 		printf("Command recognized: %s\n", token);
+		command_handler();
 	}
 
 	/* DELETE COMMAND HANDLER */
@@ -159,11 +222,13 @@ int main(int argc, char **argv)
 		}
 
 		// Correct command use
-		h.command_id = 2;
-		printf("Command recognized: %s\n", token);
+		h.command_id = DELETE;
+		// Change header
+		// printf("Command recognized: %s\n", token); //TODOD
 		token = strtok(NULL, " ");
 		strcpy(h.filename, token);
-		printf("Command filename: %s\n", h.filename);
+		// printf("Command filename: %s\n", h.filename);//TODOD
+		command_handler();
 	}
 
 	/* PUT COMMAND HANDLER */
@@ -176,11 +241,11 @@ int main(int argc, char **argv)
 		}
 
 		// Correct command use
-		h.command_id = 3;
-		printf("Command recognized: %s\n", token);
+		// Change header
+		h.command_id = PUT;
 		token = strtok(NULL, " ");
 		strcpy(h.filename, token);
-		printf("Command filename: %s\n", h.filename);
+		command_handler();
 	}
 
 	/* GET COMMAND HANDLER */
@@ -193,11 +258,12 @@ int main(int argc, char **argv)
 		}
 
 		// Correct command use
-		h.command_id = 4;
-		printf("Command recognized: %s\n", token);
+		// Change header
+		h.command_id = GET;
 		token = strtok(NULL, " ");
 		strcpy(h.filename, token);
-		printf("Command filename: %s\n", h.filename);
+		// Get filesize
+		command_handler();
 	}
 
 	/* OTHER INPUT HANDLER */
