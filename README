@@ -7,6 +7,7 @@ gcc udp_server.c -o server
 ./client [ip_address] [port_number]
 
 --- NOTES ---
+BUFSIZE must be > sizeof(Header)
 Run server first?
 Port number > 5000
 When running both the client and the server on the same machine (aka testing locally)

@@ -10,29 +10,27 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netdb.h>
+#include "udp.h"
 
-#define BUFSIZE 1024
-#define FILENAME_BUFSIZE 1024
-#define EXIT 0
-#define LS 1
-#define DELETE 2
-#define PUT 3
-#define GET 4
-#define false 0
-#define true 1
+int sockfd, portno, n;
+int serverlen;
+struct sockaddr_in serveraddr;
+struct hostent *server;
+char *hostname;
+char buf[BUFSIZE];
+
+/*
+ * error - wrapper for perror
+ */
+void error(char *msg)
+{
+	perror(msg);
+	exit(0);
+}
 
 /**
- * package header
+ * Checks if string is valid file on client
  */
-typedef struct
-{
-	uint8_t command_id;
-	char filename[FILENAME_BUFSIZE];
-	long int num_bytes;
-} Header;
-
-Header h;
-
 int is_validfile(char* filename) {
 	// opening the file in read mode 
     FILE* f = fopen(filename, "r"); 
@@ -45,6 +43,9 @@ int is_validfile(char* filename) {
 	return true;
 }
 
+/**
+ * Return file size of input file name
+ */
 long int get_filesize(char* filename) 
 { 
     // opening the file in read mode 
@@ -63,54 +64,119 @@ long int get_filesize(char* filename)
     return res; 
 }
 
-void command_handler() {
+/**
+ * Copy the header into the first bytes of the buffer
+ */
+void update_header_in_buffer(Header h) {
+	memcpy(buf, &h, sizeof(Header));
+}
+
+/**
+ * Send buffer to server
+ */
+void send_to_server() {
+	/* send the message to the server */
+	serverlen = sizeof(serveraddr);
+	n = sendto(sockfd, buf, BUFSIZE, 0, &serveraddr, serverlen);
+	if (n < 0)
+		error("ERROR in sendto");
+
+	/* print the server's reply */
+	n = recvfrom(sockfd, buf, BUFSIZE-1, 0, (struct sockaddr *)&serveraddr, &serverlen);
+	if (n < 0)
+		error("ERROR in recvfrom");
+	printf("Echo from server: %s!!!\n", buf);
+}
+
+/**
+ * Send exit command
+ */
+void send_exit_command_handler(Header h) {
+
+	update_header_in_buffer(h);
+
+	send_to_server();
+}
+
+/**
+ * Send ls command
+ */
+void send_ls_command_handler(Header h) {
+
+	update_header_in_buffer(h);
+
+	send_to_server();
+}
+
+/**
+ * Send delete command
+ */
+void send_delete_command_handler(Header h) {
+	// Update filesize in header
+	h.data_size = get_filesize(h.filename);
+
+	update_header_in_buffer(h);
+
+	send_to_server();
+	
+}
+
+/**
+ * Send put command. Will send in separate packages if needed
+ */
+void send_put_command_handler(Header h) {
+	// Check for valid filename and update size
+	if (!is_validfile(h.filename))
+		return;
+	// printf("Filesize: %ld\n", get_filesize(h.filename)); //TODODE
+
+	// Update filesize in header
+	h.data_size = get_filesize(h.filename);
+
+	update_header_in_buffer(h);
+
+	send_to_server();
+	
+}
+
+/**
+ * Send get command. Will recieve and write in separate packages if needed
+ */
+void send_get_command_handler(Header h) {
+
+	update_header_in_buffer(h);
+
+	send_to_server();
+}
+
+/**
+ * Handle commands
+ */
+void send_command_handler(Header h) {
 	switch (h.command_id)
 	{
 	case EXIT:
-		// exit_command_handler();
+		send_exit_command_handler(h);
 		break;
 	case LS:
-		// ls_command_handler();
+		send_ls_command_handler(h);
 		break;
 	case DELETE:
-		if (!is_validfile(h.filename))
-			return;
-		printf("Filesize: %ld\n", get_filesize(h.filename));
-		// delete_command_handler();
+		send_delete_command_handler(h);
 		break;
 	case PUT:
-		if (!is_validfile(h.filename))
-			return;
-		// put_command_handler();
+		send_put_command_handler(h);
 		break;
 	case GET:
-		if (!is_validfile(h.filename))
-			return;
-		// get_command_handler();
+		send_get_command_handler(h);
 		break;
-	
 	default:
 		break;
 	}
 }
-/*
- * error - wrapper for perror
- */
-void error(char *msg)
-{
-	perror(msg);
-	exit(0);
-}
 
 int main(int argc, char **argv)
 {
-	int sockfd, portno, n;
-	int serverlen;
-	struct sockaddr_in serveraddr;
-	struct hostent *server;
-	char *hostname;
-	char buf[BUFSIZE];
-
 	/* check command line arguments */
 	if (argc != 3)
 	{
@@ -144,12 +210,13 @@ int main(int argc, char **argv)
 	{
 	/* get a message from the user */
 	bzero(buf, BUFSIZE);
-	printf("--- Use the following commands: ---\n"
+	printf("-------- Use the following commands: --------\n"
 		   "    get [file_name]\n"
 		   "    put [file_name]\n"
 		   "    delete [file_name]\n"
 		   "    ls\n"
-		   "    exit\n\n$$$ ");
+		   "    exit\n"
+		   "$$$ ");
 	fgets(buf, BUFSIZE, stdin);
 
 	/* trim leading spaces and new line */
@@ -191,7 +258,7 @@ int main(int argc, char **argv)
 	}
 
 	// fprintf(stdout, "Number of commands %d\n", count); // TODODELETE
-
+	Header h;
 	// Check for correct input
 	char *token = strtok(bufptr, " ");
 
@@ -199,8 +266,7 @@ int main(int argc, char **argv)
 	if (strcmp(token, "exit") == 0)
 	{
 		h.command_id = EXIT;
-		printf("Command recognized: %s\n", token);
-		command_handler();
+		send_command_handler(h);
 		return 0;
 	}
 
@@ -208,8 +274,7 @@ int main(int argc, char **argv)
 	else if (strcmp(token, "ls") == 0)
 	{
 		h.command_id = LS;
-		printf("Command recognized: %s\n", token);
-		command_handler();
+		send_command_handler(h);
 	}
 
 	/* DELETE COMMAND HANDLER */
@@ -228,7 +293,7 @@ int main(int argc, char **argv)
 		token = strtok(NULL, " ");
 		strcpy(h.filename, token);
 		// printf("Command filename: %s\n", h.filename);//TODOD
-		command_handler();
+		send_command_handler(h);
 	}
 
 	/* PUT COMMAND HANDLER */
@@ -245,7 +310,7 @@ int main(int argc, char **argv)
 		h.command_id = PUT;
 		token = strtok(NULL, " ");
 		strcpy(h.filename, token);
-		command_handler();
+		send_command_handler(h);
 	}
 
 	/* GET COMMAND HANDLER */
@@ -263,29 +328,16 @@ int main(int argc, char **argv)
 		token = strtok(NULL, " ");
 		strcpy(h.filename, token);
 		// Get filesize
-		command_handler();
+		send_command_handler(h);
 	}
 
 	/* OTHER INPUT HANDLER */
 	else
 	{
-		h.command_id = 0xFF;
 		printf("Unknown command: %s\n", token ? token : "(empty)");
 	}
 
 	printf("\n\n");
-
-	// /* send the message to the server */
-	// serverlen = sizeof(serveraddr);
-	// n = sendto(sockfd, buf, strlen(buf), 0, &serveraddr, serverlen);
-	// if (n < 0)
-	// 	error("ERROR in sendto");
-
-	// /* print the server's reply */
-	// n = recvfrom(sockfd, buf, strlen(buf), 0, &serveraddr, &serverlen);
-	// if (n < 0)
-	// 	error("ERROR in recvfrom");
-	// printf("Echo from server: %s!!!\n", buf);
 	}
 	return 0;
 }
