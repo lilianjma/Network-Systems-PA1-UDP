@@ -10,7 +10,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netdb.h>
-#include "udp.h"
+#include "../udp.h"
 
 int sockfd, portno, n;
 int serverlen;
@@ -74,18 +74,27 @@ void update_header_in_buffer(Header h) {
 /**
  * Send buffer to server
  */
-void send_to_server() {
+void send_to_server(int print) {
 	/* send the message to the server */
 	serverlen = sizeof(serveraddr);
-	n = sendto(sockfd, buf, BUFSIZE, 0, &serveraddr, serverlen);
+	if (sockfd < 0) {
+		perror("ERROR opening socket");
+		exit(1);
+	}
+
+	n = sendto(sockfd, buf, BUFSIZE, 0, (struct sockaddr *)&serveraddr, serverlen);
 	if (n < 0)
 		error("ERROR in sendto");
+
+	// TODO ADD TIMER THAT EXITS IF SERVER DOESN'T RESPOND FAST ENOUGH
 
 	/* print the server's reply */
 	n = recvfrom(sockfd, buf, BUFSIZE-1, 0, (struct sockaddr *)&serveraddr, &serverlen);
 	if (n < 0)
 		error("ERROR in recvfrom");
-	printf("Echo from server: %s!!!\n", buf);
+	if (print) {
+		printf("Echo from server: %s!!!\n", buf);
+	}
 }
 
 /**
@@ -95,7 +104,7 @@ void send_exit_command_handler(Header h) {
 
 	update_header_in_buffer(h);
 
-	send_to_server();
+	send_to_server(1);
 }
 
 /**
@@ -105,19 +114,17 @@ void send_ls_command_handler(Header h) {
 
 	update_header_in_buffer(h);
 
-	send_to_server();
+	send_to_server(1);
 }
 
 /**
  * Send delete command
  */
 void send_delete_command_handler(Header h) {
-	// Update filesize in header
-	h.data_size = get_filesize(h.filename);
 
 	update_header_in_buffer(h);
 
-	send_to_server();
+	send_to_server(1);
 	
 }
 
@@ -125,17 +132,45 @@ void send_delete_command_handler(Header h) {
  * Send put command. Will send in separate packages if needed
  */
 void send_put_command_handler(Header h) {
+	FILE *file;
+	size_t bytes_read;
+
 	// Check for valid filename and update size
 	if (!is_validfile(h.filename))
 		return;
-	// printf("Filesize: %ld\n", get_filesize(h.filename)); //TODODE
 
 	// Update filesize in header
 	h.data_size = get_filesize(h.filename);
 
+	// TODO CALCULATE THE NUMBER OF SENDS REQUIRED
+	h.package_number = 1;
+	h.total_packages = 1;
+
 	update_header_in_buffer(h);
 
-	send_to_server();
+	// Open file in binary read mode
+    file = fopen(h.filename, "rb");
+    if (file == NULL) {
+        perror("Error opening file");
+        return;
+    }
+
+    // Put file data into buf
+    bytes_read = fread(buf+sizeof(Header), 1, BUFSIZE-sizeof(Header)-1, file);  // leave space for null terminator
+    if (bytes_read == 0 && ferror(file)) {
+        perror("Error reading file");
+        fclose(file);
+        return;
+    }
+
+    buf[bytes_read+sizeof(Header)] = '\0';
+
+    // Print the content of the buffer
+    printf("File content:\n%s\n", buf+sizeof(Header));
+
+    fclose(file);
+
+	send_to_server(1);
 	
 }
 
@@ -144,9 +179,36 @@ void send_put_command_handler(Header h) {
  */
 void send_get_command_handler(Header h) {
 
+	// Send request to server
 	update_header_in_buffer(h);
 
-	send_to_server();
+	send_to_server(0);
+
+	memcpy(&h, buf, sizeof(Header));
+
+	// Open (new) file
+    FILE *file = fopen(h.filename, "wb"); // Open file binary write mode
+
+	// Open file error
+	if (file == NULL) {
+        perror("Error opening file");
+        return;
+    }
+
+	printf("%s\n", buf+sizeof(Header));
+
+	// Write to file
+    size_t bytes_written = fwrite(buf+sizeof(Header), 1, h.data_size, file);
+
+    // Is fwrite successful, if not, error
+    if (bytes_written != h.data_size) {
+        perror("Error writing to file");
+        fclose(file);
+        return;
+    }
+
+    // Close file after writing
+    fclose(file);
 }
 
 /**
@@ -242,7 +304,6 @@ int main(int argc, char **argv)
 	int count = 0;
 	int inWord = 0;
 
-	printf("Innit\n");
 	while (*ptrcpy != '\0')
 	{
 		if (*ptrcpy == ' ')
