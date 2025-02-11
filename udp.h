@@ -1,15 +1,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define BUFSIZE 4096
-#define FILENAME_BUFSIZE 256
-#define EXIT 0
-#define LS 1
-#define DELETE 2
-#define PUT 3
-#define GET 4
-#define false 0
-#define true 1
+#define BUFSIZE             2048
+#define FILENAME_BUFSIZE    256
+#define DATABUFSIZE         (BUFSIZE - sizeof(Header))
+#define EXIT                0
+#define LS                  1
+#define DELETE              2
+#define PUT                 3
+#define GET                 4
+
+#define FALSE               0
+#define TRUE                1
 
 /**
  * package header

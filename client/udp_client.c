@@ -10,6 +10,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netdb.h>
+#include <pthread.h>
 #include "../udp.h"
 
 int sockfd, portno, n;
@@ -28,6 +29,12 @@ void error(char *msg)
 	exit(0);
 }
 
+void *watchdog_timer(void *arg) {
+    sleep(1);  // 1 second
+	char* msg = "Error: Server took too long to respond.";
+    error(msg);
+}
+
 /**
  * Checks if string is valid file on client
  */
@@ -38,9 +45,10 @@ int is_validfile(char* filename) {
     // checking if the file exist or not 
     if (f == NULL) { 
         printf("File Not Found!\n"); 
-        return false; 
+        return FALSE; 
     }
-	return true;
+
+	return TRUE;
 }
 
 /**
@@ -75,6 +83,9 @@ void update_header_in_buffer(Header h) {
  * Send buffer to server
  */
 void send_to_server(int print) {
+	// Create timer for server
+	pthread_t timer_thread;
+
 	/* send the message to the server */
 	serverlen = sizeof(serveraddr);
 	if (sockfd < 0) {
@@ -82,11 +93,15 @@ void send_to_server(int print) {
 		exit(1);
 	}
 
+	// Start timer
+    pthread_create(&timer_thread, NULL, watchdog_timer, NULL);
+
+	// Send message
 	n = sendto(sockfd, buf, BUFSIZE, 0, (struct sockaddr *)&serveraddr, serverlen);
 	if (n < 0)
 		error("ERROR in sendto");
 
-	// TODO ADD TIMER THAT EXITS IF SERVER DOESN'T RESPOND FAST ENOUGH
+	memset(buf, 0, sizeof(char) * BUFSIZE);
 
 	/* print the server's reply */
 	n = recvfrom(sockfd, buf, BUFSIZE-1, 0, (struct sockaddr *)&serveraddr, &serverlen);
@@ -95,6 +110,9 @@ void send_to_server(int print) {
 	if (print) {
 		printf("Echo from server: %s!!!\n", buf);
 	}
+
+	// End timer
+	pthread_cancel(timer_thread);
 }
 
 /**
@@ -142,10 +160,9 @@ void send_put_command_handler(Header h) {
 	// Update filesize in header
 	h.data_size = get_filesize(h.filename);
 
-	// TODO CALCULATE THE NUMBER OF SENDS REQUIRED
-	h.package_number = 1;
-	h.total_packages = 1;
-
+	// Calculate number of packages required
+	h.package_number = 0;
+	h.total_packages = h.data_size / DATABUFSIZE;
 	update_header_in_buffer(h);
 
 	// Open file in binary read mode
@@ -155,22 +172,24 @@ void send_put_command_handler(Header h) {
         return;
     }
 
-    // Put file data into buf
-    bytes_read = fread(buf+sizeof(Header), 1, BUFSIZE-sizeof(Header)-1, file);  // leave space for null terminator
-    if (bytes_read == 0 && ferror(file)) {
-        perror("Error reading file");
-        fclose(file);
-        return;
-    }
+	// Read file until done
+	while (h.package_number <= h.total_packages) {
+		// Put file data into buf
+		bytes_read = fread(buf+sizeof(Header), 1, DATABUFSIZE, file);  // leave space for null terminator ?
+		if (bytes_read == 0 && ferror(file)) {
+			perror("Error reading file");
+			fclose(file);
+			return;
+		}
 
-    buf[bytes_read+sizeof(Header)] = '\0';
+		send_to_server(1);
 
-    // Print the content of the buffer
-    printf("File content:\n%s\n", buf+sizeof(Header));
+		// Update header numbers
+		h.package_number++;
+		update_header_in_buffer(h);
+	}
 
-    fclose(file);
-
-	send_to_server(1);
+	fclose(file);
 	
 }
 
@@ -178,35 +197,69 @@ void send_put_command_handler(Header h) {
  * Send get command. Will recieve and write in separate packages if needed
  */
 void send_get_command_handler(Header h) {
-
+	Header f;
 	// Send request to server
 	update_header_in_buffer(h);
 
 	send_to_server(0);
 
-	memcpy(&h, buf, sizeof(Header));
+	memcpy(&f, buf, sizeof(Header));
 
-	// Open (new) file
-    FILE *file = fopen(h.filename, "wb"); // Open file binary write mode
+	if (f.filename != h.filename) {
+		printf("File does not exist: %s\n", h.filename);
+		return;
+	}
+
+	// Start collecting data
+	size_t datasize;
+
+	// Open file binary write mode 
+	printf("filename: %s\n", h.filename);
+    FILE *file = fopen(h.filename, "wb"); 
 
 	// Open file error
 	if (file == NULL) {
         perror("Error opening file");
-        return;
+        exit(1);
     }
 
 	printf("%s\n", buf+sizeof(Header));
 
-	// Write to file
-    size_t bytes_written = fwrite(buf+sizeof(Header), 1, h.data_size, file);
+	while (1) {
+		// Set datasize
+		if ( (DATABUFSIZE * (h.package_number + 1)) < h.data_size) {
+			datasize = DATABUFSIZE;
+		} else {
+			datasize = h.data_size%DATABUFSIZE;
+		}
 
-    // Is fwrite successful, if not, error
-    if (bytes_written != h.data_size) {
-        perror("Error writing to file");
-        fclose(file);
-        return;
-    }
+		printf("%s", buf+sizeof(Header));
 
+		// Write to file
+		size_t bytes_written = fwrite(buf+sizeof(Header), 1, datasize, file);
+
+		// If fwrite not successful error
+		if (bytes_written != datasize) {
+			perror("Error writing to file");
+			fclose(file);
+			exit(1);
+		}
+
+		fseek(file, datasize * (h.package_number + 1), SEEK_SET);
+
+		// Send to server
+		bzero(buf+sizeof(Header), DATABUFSIZE);
+		send_to_server(1);
+
+		if (h.package_number == h.total_packages) {
+			printf("Finished getting data\n");
+			break;
+		}
+
+		// Update header
+		memcpy(&h, buf, sizeof(Header));
+	}
+	printf("Close File");
     // Close file after writing
     fclose(file);
 }
@@ -218,18 +271,23 @@ void send_command_handler(Header h) {
 	switch (h.command_id)
 	{
 	case EXIT:
+		printf("EXIT\n");
 		send_exit_command_handler(h);
 		break;
 	case LS:
+		printf("LS\n");
 		send_ls_command_handler(h);
 		break;
 	case DELETE:
+		printf("DELETE\n");
 		send_delete_command_handler(h);
 		break;
 	case PUT:
+		printf("PUT\n");
 		send_put_command_handler(h);
 		break;
 	case GET:
+		printf("GET\n");
 		send_get_command_handler(h);
 		break;
 	default:
@@ -272,6 +330,7 @@ int main(int argc, char **argv)
 	{
 	/* get a message from the user */
 	bzero(buf, BUFSIZE);
+
 	printf("-------- Use the following commands: --------\n"
 		   "    get [file_name]\n"
 		   "    put [file_name]\n"
@@ -318,7 +377,6 @@ int main(int argc, char **argv)
 		ptrcpy++;
 	}
 
-	// fprintf(stdout, "Number of commands %d\n", count); // TODODELETE
 	Header h;
 	// Check for correct input
 	char *token = strtok(bufptr, " ");
@@ -353,6 +411,7 @@ int main(int argc, char **argv)
 		// printf("Command recognized: %s\n", token); //TODOD
 		token = strtok(NULL, " ");
 		strcpy(h.filename, token);
+		printf("delete %s.\n", h.filename);
 		// printf("Command filename: %s\n", h.filename);//TODOD
 		send_command_handler(h);
 	}
@@ -399,6 +458,7 @@ int main(int argc, char **argv)
 	}
 
 	printf("\n\n");
+
 	}
 	return 0;
 }

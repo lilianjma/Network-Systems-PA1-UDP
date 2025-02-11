@@ -29,26 +29,40 @@ void error(char *msg)
 */
 void send_to_client(char* buf, int sockfd, struct sockaddr_in clientaddr, int clientlen) {
 
-	printf("Buf string len: %d\n", strlen(buf));
-	int n = sendto(sockfd, buf, BUFSIZE-1, 0,
-				(struct sockaddr *)&clientaddr, clientlen);
+	// printf("Buf string len: %lu\n", strlen(buf));
+	// printf("%s\n", buf);
+	int n = sendto(sockfd, buf, BUFSIZE, 0, (struct sockaddr *)&clientaddr, clientlen);
+	// bzero(buf, BUFSIZE);
+	printf("Middle senttoclient;");
+
 	if (n < 0)
 		error("ERROR in sendto");
+	printf("End senttoclient;");
+}
+
+void recieve_from_client(char* rbuf, int sockfd, struct sockaddr_in clientaddr, int clientlen) {
+	bzero(rbuf, BUFSIZE);
+	int n = recvfrom(sockfd, rbuf, BUFSIZE, 0,
+					(struct sockaddr *)&clientaddr, &clientlen);
+	if (n < 0)
+		error("ERROR in recvfrom");
 }
 
 /**
  * Checks if string is valid file on client
  */
-int is_validfile(char* filename, char* buf) {
+int is_validfile(char* filename, char* buf, Header h) {
 	// opening the file in read mode 
     FILE* f = fopen(filename, "r"); 
   
     // checking if the file exist or not 
     if (f == NULL) { 
-        strcpy(buf, "File Not Found!\n"); 
-        return 0; 
+		strcpy(h.filename, "-1\n");
+        memcpy(buf, &h, sizeof(Header)); 
+        return FALSE; 
     }
-	return 1;
+
+	return TRUE;
 }
 
 /**
@@ -85,6 +99,7 @@ void update_header_in_buffer(Header h, char* buf) {
 void recieve_exit_command_handler(Header h, char* rbuf, char* buf, int sockfd, struct sockaddr_in clientaddr, int clientlen)
 {
 	// Send bye bye message
+	
 	strcpy(buf, "Bye bye! Hope to see you soon :)\n");
 	
 	send_to_client(buf, sockfd, clientaddr, clientlen);
@@ -95,6 +110,7 @@ void recieve_exit_command_handler(Header h, char* rbuf, char* buf, int sockfd, s
  */
 void recieve_ls_command_handler(Header h, char* rbuf, char* buf, int sockfd, struct sockaddr_in clientaddr, int clientlen)
 {
+	
 	strcpy(buf, "Recieved ls command!\n");
 	DIR *dir;
     struct dirent *entry;
@@ -124,10 +140,11 @@ void recieve_ls_command_handler(Header h, char* rbuf, char* buf, int sockfd, str
  */
 void recieve_delete_command_handler(Header h, char* rbuf, char* buf, int sockfd, struct sockaddr_in clientaddr, int clientlen)
 {
+	
 	strcpy(buf, "Recieved delete command!\n");
 
 	// Check if file exists
-	if (!is_validfile(h.filename, buf)){
+	if (!is_validfile(h.filename, buf, h)){
 		send_to_client(buf, sockfd, clientaddr, clientlen);
 		return;
 	}
@@ -154,9 +171,14 @@ void recieve_delete_command_handler(Header h, char* rbuf, char* buf, int sockfd,
  */
 void recieve_put_command_handler(Header h, char* rbuf, char* buf, int sockfd, struct sockaddr_in clientaddr, int clientlen)
 {
+	size_t datasize;
+
+	// Add message
 	strcpy(buf, "Recieved put command!\n");
 
-    FILE *file = fopen(h.filename, "wb"); // Open file binary write mode
+	// Open file binary write mode 
+	printf("filename: %s\n", h.filename);
+    FILE *file = fopen(h.filename, "wb"); 
 
 	// Open file error
 	if (file == NULL) {
@@ -166,45 +188,67 @@ void recieve_put_command_handler(Header h, char* rbuf, char* buf, int sockfd, st
 
 	printf("%s\n", rbuf+sizeof(Header));
 
-	// Write to file
-    size_t bytes_written = fwrite(rbuf+sizeof(Header), 1, h.data_size, file);
+	while (1) {
+		if ( (DATABUFSIZE * (h.package_number + 1)) < h.data_size) {
+			datasize = DATABUFSIZE;
+		} else {
+			datasize = h.data_size%DATABUFSIZE;
+		}
 
-    // Is fwrite successful, if not, error
-    if (bytes_written != h.data_size) {
-        perror("Error writing to file");
-        fclose(file);
-        exit(1);
-    }
+		printf("%s", rbuf+sizeof(Header));
+		// Write to file
+		size_t bytes_written = fwrite(rbuf+sizeof(Header), 1, datasize, file);
 
+		// If fwrite not successful error
+		if (bytes_written != datasize) {
+			perror("Error writing to file");
+			fclose(file);
+			exit(1);
+		}
+
+		fseek(file, datasize * (h.package_number + 1), SEEK_SET);
+
+		// Send to client
+		printf("HELLOHELP\n");
+		strcpy(buf, "hello help!\n");
+		send_to_client(buf, sockfd, clientaddr, clientlen);
+
+		if (h.package_number == h.total_packages) {
+			break;
+		}
+		// Recieve from client
+		int n = recvfrom(sockfd, rbuf, BUFSIZE, 0, (struct sockaddr *)&clientaddr, &clientlen);
+		if (n < 0)
+			error("ERROR in recvfrom");
+
+		// Update header
+		memcpy(&h, rbuf, sizeof(Header));
+	}
+	printf("Close File");
     // Close file after writing
     fclose(file);
-
-	// Send to client
-	send_to_client(buf, sockfd, clientaddr, clientlen);}
+}
 
 /**
  * Sends the chosen file to client
  */
 void recieve_get_command_handler(Header h, char* rbuf, char* buf, int sockfd, struct sockaddr_in clientaddr, int clientlen)
 {
-	// Check if file exists
-	if (!is_validfile(h.filename, buf)){
-		send_to_client(buf, sockfd, clientaddr, clientlen);
-		return;
-	}
-
-	// Start sending file
 	FILE *file;
 	size_t bytes_read;
 
+	// Check for valid filename and update size
+	if (!is_validfile(h.filename, buf, h)){
+		send_to_client(buf, sockfd, clientaddr, &clientlen);
+		return;
+	}
+	
 	// Update filesize in header
 	h.data_size = get_filesize(h.filename);
 
-	// TODO CALCULATE THE NUMBER OF SENDS REQUIRED
-	h.package_number = 1;
-	h.total_packages = 1;
-
-	// Update buffer with header
+	// Calculate number of packages required
+	h.package_number = 0;
+	h.total_packages = h.data_size / DATABUFSIZE;
 	update_header_in_buffer(h, buf);
 
 	// Open file in binary read mode
@@ -214,24 +258,30 @@ void recieve_get_command_handler(Header h, char* rbuf, char* buf, int sockfd, st
         return;
     }
 
-    // Put file data into buf
-    bytes_read = fread(buf+sizeof(Header), 1, h.data_size, file);  // leave space for null terminator
-    if (bytes_read == 0 && ferror(file)) {
-        perror("Error reading file");
-        fclose(file);
-        return;
-    }
+	// Read file until done
+	while (h.package_number <= h.total_packages) {
+		// Put file data into buf
+		bytes_read = fread(buf+sizeof(Header), 1, DATABUFSIZE, file);  // leave space for null terminator ?
+		if (bytes_read == 0 && ferror(file)) {
+			perror("Error reading file");
+			fclose(file);
+			return;
+		}
 
-	// Add null terminator to end of file
-    buf[bytes_read+sizeof(Header)] = '\0';
+		printf("Sending to client");
+		send_to_client(buf, sockfd, clientaddr, &clientlen);
 
-    // Print the content of the buffer
-    printf("File content:\n%s\n", buf+sizeof(Header));
+		// Recieve from client
+		int n = recvfrom(sockfd, rbuf, BUFSIZE, 0, (struct sockaddr *)&clientaddr, &clientlen);
+		if (n < 0)
+			error("ERROR in recvfrom");
 
-    fclose(file);
+		// Update header numbers
+		h.package_number++;
+		update_header_in_buffer(h, buf);
+	}
 
-	// Send to client
-	send_to_client(buf, sockfd, clientaddr, clientlen);
+	fclose(file);
 }
 
 int main(int argc, char **argv)
@@ -317,7 +367,7 @@ int main(int argc, char **argv)
 			error("ERROR on inet_ntoa\n");
 		printf("server received datagram from %s (%s)\n",
 			   hostp->h_name, hostaddrp);
-		printf("server received %d/%d bytes: %s\n", strlen(rbuf), n, rbuf);
+		printf("server received %lud/%d bytes: %s\n", strlen(rbuf), n, rbuf);
 
 		/*
 		 * handle command
@@ -328,23 +378,30 @@ int main(int argc, char **argv)
 		switch (h.command_id)
 		{
 		case EXIT:
+			printf("EXIT\n");
 			recieve_exit_command_handler(h, rbuf, buf, sockfd, clientaddr, clientlen);
 			break;
 		case LS:
+			printf("LS\n");
 			recieve_ls_command_handler(h, rbuf, buf, sockfd, clientaddr, clientlen);
 			break;
 		case DELETE:
+			printf("DELETE\n");
 			recieve_delete_command_handler(h, rbuf, buf, sockfd, clientaddr, clientlen);
 			break;
 		case PUT:
+			printf("PUT\n");
 			recieve_put_command_handler(h, rbuf, buf, sockfd, clientaddr, clientlen);
 			break;
 		case GET:
+			printf("GET\n");
 			recieve_get_command_handler(h, rbuf, buf, sockfd, clientaddr, clientlen);
 			break;
-
 		default:
+			printf("DEF\n");
 			break;
 		}
+
+		memset(&h, 0, sizeof(Header));
 	}
 }
